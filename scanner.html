@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Scanner</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 flex items-center justify-center min-h-screen p-4">
+
+    <!-- Mobile View -->
+    <div id="mobile-view">
+        <div class="bg-white p-6 rounded-2xl shadow-lg border border-slate-200 text-center max-w-md mx-auto">
+            <h1 class="text-3xl font-bold text-slate-900">Scanner Mode</h1>
+            <p class="text-slate-600 mt-2 mb-6">Point your camera at a document and take a picture. It will be sent to your browser.</p>
+            <div id="upload-status" class="mb-4 text-sm text-indigo-600 font-medium h-5"></div>
+            <label for="camera-input" class="w-full bg-indigo-600 text-white font-bold py-4 px-6 rounded-lg hover:bg-indigo-700 active:bg-indigo-800 transition-all duration-300 shadow-lg cursor-pointer inline-flex items-center justify-center gap-3">
+                <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 13a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
+                <span>Scan Page</span>
+            </label>
+            <input type="file" id="camera-input" accept="image/*" capture="environment" class="hidden">
+            <p class="text-xs text-slate-400 mt-4">Using rear camera. You may need to grant camera permissions.</p>
+        </div>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore, doc, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+
+        // --- CONFIG & ELEMENTS ---
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : { apiKey: "YOUR_API_KEY", authDomain: "YOUR_AUTH_DOMAIN", projectId: "YOUR_PROJECT_ID" };
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-scan-app';
+        
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+
+        const cameraInput = document.getElementById('camera-input');
+        const uploadStatus = document.getElementById('upload-status');
+        
+        let sessionId = null;
+        let docRef = null;
+
+        // --- INITIALIZATION ---
+        async function init() {
+            try {
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                
+                const params = new URLSearchParams(window.location.search);
+                sessionId = params.get('session');
+
+                if (sessionId) {
+                    setupMobileView();
+                } else {
+                    document.body.innerHTML = `<div class="text-red-500 text-center font-semibold">Error: No session ID found. Please scan a QR code from the main page.</div>`;
+                }
+            } catch (error) {
+                console.error("Authentication or initialization failed:", error);
+                document.body.innerHTML = `<div class="text-red-500 font-semibold">Error: Could not connect to services.</div>`;
+            }
+        }
+        
+        // --- MOBILE VIEW LOGIC ---
+        function setupMobileView() {
+            docRef = doc(db, `/artifacts/${appId}/public/data/scans`, sessionId);
+            cameraInput.addEventListener('change', handleImageCapture);
+        }
+
+        function handleImageCapture(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            uploadStatus.textContent = 'Compressing...';
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const img = new Image();
+                img.onload = async () => {
+                    const canvas = document.createElement('canvas');
+                    const MAX_WIDTH = 1080;
+                    const scaleSize = MAX_WIDTH / img.width;
+                    canvas.width = MAX_WIDTH;
+                    canvas.height = img.height * scaleSize;
+
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                    
+                    const compressedDataUrl = canvas.toDataURL('image/jpeg', 0.85);
+                    uploadStatus.textContent = 'Uploading...';
+                    
+                    try {
+                        const newPage = { id: crypto.randomUUID(), data: compressedDataUrl };
+                        await updateDoc(docRef, { pages: arrayUnion(newPage) });
+                        uploadStatus.textContent = 'Upload complete!';
+                    } catch (error) {
+                        console.error("Error uploading image:", error);
+                        uploadStatus.textContent = 'Upload failed.';
+                    }
+                    setTimeout(() => { uploadStatus.textContent = ''; }, 2000);
+                };
+                img.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+            event.target.value = '';
+        }
+
+        init();
+    </script>
+</body>
+</html>
