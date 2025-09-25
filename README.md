@@ -1,1 +1,1 @@
-# Scan-PDF
+#This is my Scan-to-PDF application.
